@@ -119,9 +119,11 @@ extern "C" void scanline_col32cb16blend_arm(uint16_t *dst, uint32_t col, size_t 
 
 static inline uint16_t  convertAbgr8888ToRgb565(uint32_t  pix)
 {
-    return uint16_t( ((pix << 8) & 0xf800) |
+// Change by embest, we modify skia and libjpeg, because the ovr format of lcd controller is ARGB
+// The data output from them is A[31:24] R[23:16] G[15:8] B[7:0].
+    return uint16_t( ((pix >> 8 ) & 0xf800) |
                       ((pix >> 5) & 0x07e0) |
-                      ((pix >> 19) & 0x001f) );
+                      ((pix >> 3) & 0x001f));
 }
 
 struct shortcut_t {
@@ -189,6 +191,13 @@ static shortcut_t shortcuts[] = {
     { { { 0x03515104, 0x00000177, { 0x00000001, 0x00000000 } },
         { 0xFFFFFFFF, 0xFFFFFFFF, { 0xFFFFFFFF, 0x0000003F } } },
         "565 fb, 8888 tx, SRC_OVER clamp dither", scanline_t32cb16blend_clamp_dither, init_y },
+    /* special case for embest */
+    { { { 0x03515104, 0x00000077, { 0x00000005, 0x00000000 } },
+        { 0xFFFFFFFF, 0xFFFFFFFF, { 0xFFFFFFFF, 0x0000003F } } },
+        "565 fb, 8888 tx, SRC_OVER clamp", scanline_t32cb16blend_clamp, init_y },
+    { { { 0x03515104, 0x00000177, { 0x00000005, 0x00000000 } },
+        { 0xFFFFFFFF, 0xFFFFFFFF, { 0xFFFFFFFF, 0x0000003F } } },        
+        "565 fb, 8888 tx, SRC_OVER clamp dither", scanline_t32cb16blend_clamp_dither, init_y },        
     /* another case used during emulation */
     { { { 0x03515104, 0x00000077, { 0x00001001, 0x00000000 } },
         { 0xFFFFFFFF, 0xFFFFFFFF, { 0xFFFFFFFF, 0x0000003F } } },
@@ -1097,9 +1106,11 @@ struct ditherer {
         return ret;
     }
     uint16_t abgr8888ToRgb565(uint32_t s) {
-        uint32_t r = s & 0xff;
+    // Change by embest, we modify skia and libjpeg, because the ovr format of lcd controller is ARGB
+    // The data output from them is A[31:24] R[23:16] G[15:8] B[7:0]. 
+        uint32_t b = s & 0xff;
         uint32_t g = (s >> 8) & 0xff;
-        uint32_t b = (s >> 16) & 0xff;
+        uint32_t r = (s >> 16) & 0xff;    
         return rgb888ToRgb565(r,g,b);
     }
     /* The following assumes that r/g/b are in the 0..255 range each */
@@ -1128,7 +1139,7 @@ protected:
  *   blender.blend(<32-bit-src-pixel-value>,<ptr-to-16-bit-dest-pixel>)
  */
 struct blender_32to16 {
-    blender_32to16(context_t* c) { }
+    blender_32to16(context_t* c) { mFormat = GGL_READ_NEEDS(T_FORMAT, c->state.needs.t[0]); }
     void write(uint32_t s, uint16_t* dst) {
         if (s == 0)
             return;
@@ -1138,9 +1149,10 @@ struct blender_32to16 {
             *dst = convertAbgr8888ToRgb565(s);
         } else {
             int f = 0x100 - (sA + (sA>>7));
-            int sR = (s >> (   3))&0x1F;
+            //Change by embest
+            int sB = (s >> (   3))&0x1F;
             int sG = (s >> ( 8+2))&0x3F;
-            int sB = (s >> (16+3))&0x1F;
+            int sR = (s >> (16+3))&0x1F;
             uint16_t d = *dst;
             int dR = (d>>11)&0x1f;
             int dG = (d>>5)&0x3f;
@@ -1163,9 +1175,10 @@ struct blender_32to16 {
         } else {
             int threshold = di.get_value() << (8 - GGL_DITHER_BITS);
             int f = 0x100 - (sA + (sA>>7));
-            int sR = (s >> (   3))&0x1F;
+            //Change by embest
+            int sB = (s >> (   3))&0x1F;
             int sG = (s >> ( 8+2))&0x3F;
-            int sB = (s >> (16+3))&0x1F;
+            int sR = (s >> (16+3))&0x1F;
             uint16_t d = *dst;
             int dR = (d>>11)&0x1f;
             int dG = (d>>5)&0x3f;
@@ -1179,6 +1192,14 @@ struct blender_32to16 {
             *dst = uint16_t((sR<<11)|(sG<<5)|sB);
         }
     }
+
+private:
+    //TODO: According to our change, all the 32 bit format's ( < RGBA8888 BGRA8888 RGBX8888>) pixelformat is A[31:24] R[23:16] G[15:8] B[7:0]. 
+    //But, Actually, only BGRA8888 is suitable for our code.
+    //So, we can use the mFormat to distinguish. like if ( mFormat == GGL_PIXEL_FORMAT_BGRA_8888 )
+    //But, In order to reduce the code been executed, we don't consider it now.
+    //So we can have a better performance.
+    uint32_t mFormat;
 };
 
 /* This blender does the same for the 'blend_srca' operation.
@@ -1192,9 +1213,10 @@ struct blender_32to16_srcA {
         }
         uint16_t d = *dst;
         s = GGL_RGBA_TO_HOST(s);
-        int sR = (s >> (   3))&0x1F;
+        //Change by embest
+        int sB = (s >> (   3))&0x1F;
         int sG = (s >> ( 8+2))&0x3F;
-        int sB = (s >> (16+3))&0x1F;
+        int sR = (s >> (16+3))&0x1F;
         int sA = (s>>24);
         int f1 = (sA + (sA>>7));
         int f2 = 0x100-f1;
@@ -2073,9 +2095,10 @@ void scanline_col32cb16blend(context_t* c)
         int dR = (d>>11)&0x1f;
         int dG = (d>>5)&0x3f;
         int dB = (d)&0x1f;
-        int sR = (s >> (   3))&0x1F;
+        //Change by embest
+        int sB = (s >> (   3))&0x1F;
         int sG = (s >> ( 8+2))&0x3F;
-        int sB = (s >> (16+3))&0x1F;
+        int sR = (s >> (16+3))&0x1F;
         sR += (f*dR)>>8;
         sG += (f*dG)>>8;
         sB += (f*dB)>>8;
