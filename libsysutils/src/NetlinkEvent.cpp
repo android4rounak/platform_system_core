@@ -75,7 +75,7 @@ void NetlinkEvent::dump() {
 bool NetlinkEvent::parseBinaryNetlinkMessage(char *buffer, int size) {
     size_t sz = size;
     const struct nlmsghdr *nh = (struct nlmsghdr *) buffer;
-
+    return true;
     while (NLMSG_OK(nh, sz) && (nh->nlmsg_type != NLMSG_DONE)) {
 
         if (nh->nlmsg_type == RTM_NEWLINK) {
